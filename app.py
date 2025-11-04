@@ -1,4 +1,4 @@
-import gradio as gr
+import streamlit as st
 from video_utils import get_audio, get_frames, combine_audio_video
 from audio_steg import hide_data, recover_data
 from frame_steg import encode_frames, decode_frames
@@ -6,151 +6,148 @@ from analysis_utils import analyze_frames
 import os
 import tempfile
 import zipfile
+import shutil
 
+# Helper function to unzip frames
 def unzip_frames(zip_path):
     temp_dir = tempfile.mkdtemp()
     with zipfile.ZipFile(zip_path, 'r') as zip_ref:
         zip_ref.extractall(temp_dir)
     return temp_dir
 
-def split_and_combine_ui():
-    with gr.Blocks() as interface:
-        gr.Markdown("## Video Tools")
-        with gr.Tabs():
-            with gr.TabItem("Get Audio"):
-                with gr.Row():
-                    video_input = gr.Video(label="Input Video")
-                    output_audio = gr.Audio(label="Extracted Audio")
-                get_audio_btn = gr.Button("Get Audio")
-                get_audio_btn.click(get_audio, inputs=video_input, outputs=output_audio)
+# ---------------- Sidebar Navigation ----------------
+st.sidebar.title("🔐 Steganography Toolkit")
+page = st.sidebar.radio(
+    "Select Tool",
+    [
+        "🎞️ Video Splitter & Combiner",
+        "🎵 Hide Data in Audio",
+        "📤 Recover Data from Audio",
+        "🖼️ Hide Data in Frames",
+        "📥 Recover Data from Frames",
+        "🔍 Detect Steganography in Images",
+    ],
+)
 
-            with gr.TabItem("Get Frames"):
-                with gr.Row():
-                    video_input_frames = gr.Video(label="Input Video")
-                    output_frames = gr.File(label="Extracted Frames (Zip)")
-                get_frames_btn = gr.Button("Get Frames")
-                def get_frames_wrapper(video_path):
-                    frames_dir = get_frames(video_path)
-                    zip_path = f"{frames_dir}.zip"
-                    os.system(f"zip -r {zip_path} {frames_dir}")
-                    return zip_path
-                get_frames_btn.click(get_frames_wrapper, inputs=video_input_frames, outputs=output_frames)
+st.title(page)
 
+# ---------------- Page 1: Video Splitter and Combiner ----------------
+if page == "🎞️ Video Splitter & Combiner":
+    st.header("Extract or Combine Video Components")
+    tab1, tab2, tab3 = st.tabs(["Get Audio", "Get Frames", "Combine Audio & Frames"])
 
-            with gr.TabItem("Combine Audio and Video"):
-                with gr.Row():
-                    frames_input = gr.File(label="Frames (Zip)")
-                    audio_input = gr.Audio(label="Input Audio")
-                    og_video_input = gr.Video(label="Original Video (for FPS)")
-                    output_video = gr.Video(label="Combined Video")
-                combine_btn = gr.Button("Combine")
-                def combine_wrapper(frames_zip, audio_path, og_video_path):
-                    frames_dir = unzip_frames(frames_zip.name)
-                    return combine_audio_video(frames_dir, audio_path, og_video_path)
-                combine_btn.click(combine_wrapper, inputs=[frames_input, audio_input, og_video_input], outputs=output_video)
+    with tab1:
+        video_file = st.file_uploader("Upload Video", type=["mp4", "mov", "avi"])
+        if st.button("Extract Audio") and video_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+                tmp.write(video_file.read())
+                audio_path = get_audio(tmp.name)
+                st.audio(audio_path)
 
-    return interface
+    with tab2:
+        video_file2 = st.file_uploader("Upload Video", type=["mp4", "mov", "avi"], key="frames")
+        if st.button("Extract Frames") and video_file2:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+                tmp.write(video_file2.read())
+                frames_dir = get_frames(tmp.name)
+                zip_path = shutil.make_archive(frames_dir, "zip", frames_dir)
+                with open(zip_path, "rb") as f:
+                    st.download_button("Download Frames (Zip)", f, file_name="frames.zip")
 
-def hide_audio_ui():
-    with gr.Blocks() as interface:
-        gr.Markdown("## Hide Data in Audio")
-        with gr.Row():
-            sound_input = gr.Audio(label="Input Audio")
-            file_input = gr.File(label="Text File to Hide")
-            num_lsb = gr.Slider(1, 8, value=2, step=1, label="Number of LSBs")
-        with gr.Row():
-            output_audio = gr.Audio(label="Output Audio")
-            info_output = gr.Textbox(label="Info")
-        hide_btn = gr.Button("Hide Data")
-        hide_btn.click(hide_data, inputs=[sound_input, file_input, num_lsb], outputs=[output_audio, info_output])
-    return interface
+    with tab3:
+        frames_zip = st.file_uploader("Upload Frames (Zip)", type=["zip"])
+        audio_file = st.file_uploader("Upload Audio", type=["wav", "mp3"])
+        og_video = st.file_uploader("Upload Original Video (for FPS)", type=["mp4", "mov"])
+        if st.button("Combine"):
+            if frames_zip and audio_file and og_video:
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as fz, \
+                     tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as fa, \
+                     tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as fv:
+                    fz.write(frames_zip.read())
+                    fa.write(audio_file.read())
+                    fv.write(og_video.read())
+                    frames_dir = unzip_frames(fz.name)
+                    video_out = combine_audio_video(frames_dir, fa.name, fv.name)
+                    st.video(video_out)
 
-def recover_audio_ui():
-    with gr.Blocks() as interface:
-        gr.Markdown("## Recover Data from Audio")
-        with gr.Row():
-            audio_input = gr.Audio(label="Input Audio")
-            num_lsb = gr.Slider(1, 8, value=2, step=1, label="Number of LSBs")
-            bytes_to_recover = gr.Number(label="Number of Bytes to Recover")
-        with gr.Row():
-            output_file = gr.File(label="Recovered Text File")
-        recover_btn = gr.Button("Recover Data")
-        def recover_data_wrapper(audio_path, num_lsb, bytes_to_recover):
-            return recover_data(audio_path, int(num_lsb), int(bytes_to_recover))
-        recover_btn.click(recover_data_wrapper, inputs=[audio_input, num_lsb, bytes_to_recover], outputs=output_file)
-    return interface
+# ---------------- Page 2: Hide Data in Audio ----------------
+elif page == "🎵 Hide Data in Audio":
+    st.header("Hide File in Audio")
+    sound = st.file_uploader("Upload Audio", type=["wav", "mp3"])
+    secret_file = st.file_uploader("Upload File to Hide")
+    num_lsb = st.slider("Number of LSBs", 1, 8, 2)
 
-def hide_frames_ui():
-    with gr.Blocks() as interface:
-        gr.Markdown("## Hide Data in Frames")
-        with gr.Row():
-            start_frame = gr.Number(label="Start Frame")
-            end_frame = gr.Number(label="End Frame")
-            frames_zip = gr.File(label="Frames (Zip)")
-            file_to_hide = gr.File(label="File to Hide")
-        with gr.Row():
-            output_file = gr.File(label="Encoded Frames (Zip)")
-        hide_btn = gr.Button("Hide Data")
-        def hide_frames_wrapper(start, end, frames_zip, file_to_hide):
-            frames_dir = unzip_frames(frames_zip.name)
-            return encode_frames(int(start), int(end), file_to_hide.name, frames_dir)
-        hide_btn.click(hide_frames_wrapper, inputs=[start_frame, end_frame, frames_zip, file_to_hide], outputs=output_file)
+    if st.button("Hide Data"):
+        if sound and secret_file:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as sa, \
+                 tempfile.NamedTemporaryFile(delete=False) as sf:
+                sa.write(sound.read())
+                sf.write(secret_file.read())
+                output_audio, info = hide_data(sa.name, sf.name, num_lsb)
+                st.audio(output_audio)
+                st.info(info)
 
-    return interface
+# ---------------- Page 3: Recover Data from Audio ----------------
+elif page == "📤 Recover Data from Audio":
+    st.header("Recover Hidden File from Audio")
+    audio_in = st.file_uploader("Upload Stego Audio", type=["wav", "mp3"])
+    num_lsb = st.slider("Number of LSBs", 1, 8, 2)
+    bytes_to_recover = st.number_input("Bytes to Recover", min_value=1, step=1)
 
-def recover_frames_ui():
-    with gr.Blocks() as interface:
-        gr.Markdown("## Recover Data from Frames")
-        with gr.Row():
-            start_frame = gr.Number(label="Start Frame")
-            end_frame = gr.Number(label="End Frame")
-            frames_zip = gr.File(label="Frames (Zip)")
-        with gr.Row():
-            output_file = gr.File(label="Recovered Text File")
-        recover_btn = gr.Button("Recover Data")
-        def recover_frames_wrapper(start, end, frames_zip):
-            frames_dir = unzip_frames(frames_zip.name)
-            return decode_frames(int(start), int(end), frames_dir)
-        recover_btn.click(recover_frames_wrapper, inputs=[start_frame, end_frame, frames_zip], outputs=output_file)
-    return interface
+    if st.button("Recover Data"):
+        if audio_in:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as fa:
+                fa.write(audio_in.read())
+                recovered = recover_data(fa.name, num_lsb, int(bytes_to_recover))
+                with open(recovered, "rb") as f:
+                    st.download_button("Download Recovered File", f, file_name="recovered.txt")
 
-def detect_steganography_ui():
-    with gr.Blocks() as interface:
-        gr.Markdown("## Steganography Detection in Images")
-        with gr.Row():
-            num_frames = gr.Number(label="Number of Frames")
-            file_type = gr.Textbox(label="File Type (e.g. png)", value="png")
-            frames_zip = gr.File(label="Frames (Zip)")
-        with gr.Row():
-            output_text = gr.Textbox(label="Detection Result")
-        detect_btn = gr.Button("Detect Steganography")
-        def detect_wrapper(num_frames, file_type, frames_zip):
-            frames_dir = unzip_frames(frames_zip.name)
-            return analyze_frames(int(num_frames), file_type, frames_dir)
-        detect_btn.click(detect_wrapper, inputs=[num_frames, file_type, frames_zip], outputs=output_text)
-    return interface
+# ---------------- Page 4: Hide Data in Frames ----------------
+elif page == "🖼️ Hide Data in Frames":
+    st.header("Hide File in Frames")
+    start_frame = st.number_input("Start Frame", min_value=0, step=1)
+    end_frame = st.number_input("End Frame", min_value=1, step=1)
+    frames_zip = st.file_uploader("Upload Frames (Zip)", type=["zip"])
+    file_to_hide = st.file_uploader("File to Hide")
 
-with gr.Blocks() as demo:
-    gr.TabbedInterface(
-        [
-            split_and_combine_ui(),
-            hide_audio_ui(),
-            recover_audio_ui(),
-            hide_frames_ui(),
-            recover_frames_ui(),
-            detect_steganography_ui(),
-        ],
-        [
-            "Video Splitter and Combiner",
-            "Hide Data in Audio",
-            "Recover Data in Audio",
-            "Hide Data in Frames",
-            "Recover Data in Frames",
-            "Steganography Detection in Images",
-        ],
-    )
+    if st.button("Hide Data in Frames"):
+        if frames_zip and file_to_hide:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as fz, \
+                 tempfile.NamedTemporaryFile(delete=False) as ff:
+                fz.write(frames_zip.read())
+                ff.write(file_to_hide.read())
+                frames_dir = unzip_frames(fz.name)
+                out_zip = encode_frames(int(start_frame), int(end_frame), ff.name, frames_dir)
+                with open(out_zip, "rb") as f:
+                    st.download_button("Download Encoded Frames (Zip)", f, file_name="encoded_frames.zip")
 
-if __name__ == "__main__":
-    if not os.path.exists('output'):
-        os.makedirs('output')
-    demo.launch(share=False)
+# ---------------- Page 5: Recover Data from Frames ----------------
+elif page == "📥 Recover Data from Frames":
+    st.header("Recover File from Frames")
+    start_frame = st.number_input("Start Frame", min_value=0, step=1)
+    end_frame = st.number_input("End Frame", min_value=1, step=1)
+    frames_zip = st.file_uploader("Upload Encoded Frames (Zip)", type=["zip"])
+
+    if st.button("Recover Data from Frames"):
+        if frames_zip:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as fz:
+                fz.write(frames_zip.read())
+                frames_dir = unzip_frames(fz.name)
+                recovered_file = decode_frames(int(start_frame), int(end_frame), frames_dir)
+                with open(recovered_file, "rb") as f:
+                    st.download_button("Download Recovered File", f, file_name="recovered.txt")
+
+# ---------------- Page 6: Detect Steganography ----------------
+elif page == "🔍 Detect Steganography in Images":
+    st.header("Steganography Detection")
+    num_frames = st.number_input("Number of Frames to Analyze", min_value=1, step=1)
+    file_type = st.text_input("File Type (e.g. png, jpg)", value="png")
+    frames_zip = st.file_uploader("Upload Frames (Zip)", type=["zip"])
+
+    if st.button("Detect"):
+        if frames_zip:
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".zip") as fz:
+                fz.write(frames_zip.read())
+                frames_dir = unzip_frames(fz.name)
+                result = analyze_frames(int(num_frames), file_type, frames_dir)
+                st.text_area("Detection Result", result)
