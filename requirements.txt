@@ -1,0 +1,5 @@
+gradio
+moviepy==1.0.3
+Pillow
+opencv-python
+numpy
